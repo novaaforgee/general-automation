@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#0F172A"
+    android:padding="28dp">
+
+    <ImageView
+        android:layout_width="84dp"
+        android:layout_height="84dp"
+        android:src="@drawable/ic_camera_lens"
+        android:background="@drawable/bg_floating_button"
+        android:padding="18dp"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="FloatSnap Pro"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#F8FAFC"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Silent • 1-Tap • Direct to Gallery"
+        android:textSize="14sp"
+        android:textColor="#94A3B8"
+        android:layout_marginBottom="36dp" />
+
+    <androidx.appcompat.widget.AppCompatButton
+        android:id="@+id/btnToggle"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="Start Floating Button"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:background="@drawable/bg_btn_primary"
+        android:textAllCaps="false" />
+
+</LinearLayout>
