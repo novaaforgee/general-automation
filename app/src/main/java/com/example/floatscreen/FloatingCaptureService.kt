@@ -10,15 +10,12 @@ import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.os.*
 import android.util.DisplayMetrics
 import android.view.*
 import android.widget.ImageView
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FloatingCaptureService : Service() {
 
@@ -31,11 +28,12 @@ class FloatingCaptureService : Service() {
     private var screenWidth = 0
     private var screenHeight = 0
     private var screenDensity = 0
+    private val isCapturing = AtomicBoolean(false)
 
     companion object {
         const val EXTRA_RESULT_CODE = "RESULT_CODE"
         const val EXTRA_RESULT_DATA = "RESULT_DATA"
-        private const val NOTIFICATION_CHANNEL_ID = "FloatSnapChannel"
+        private const val NOTIFICATION_CHANNEL_ID = "FloatSnapSilentChannel"
         private const val NOTIFICATION_ID = 101
     }
 
@@ -45,7 +43,7 @@ class FloatingCaptureService : Service() {
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
         val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
 
-        startForeground(NOTIFICATION_ID, createNotification())
+        startForeground(NOTIFICATION_ID, createSilentNotification())
 
         if (resultCode == Activity.RESULT_OK && resultData != null) {
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -73,31 +71,33 @@ class FloatingCaptureService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val btnSizePx = (58 * resources.displayMetrics.density).toInt()
+
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            btnSizePx,
+            btnSizePx,
             layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 100
-            y = 300
+            x = screenWidth - btnSizePx - 20
+            y = screenHeight / 3
         }
 
         val button = ImageView(this).apply {
-            setImageResource(android.R.drawable.ic_menu_camera)
-            setBackgroundColor(0x88000000.toInt())
-            setPadding(30, 30, 30, 30)
+            setImageResource(R.drawable.ic_camera_lens)
+            setBackgroundResource(R.drawable.bg_floating_button)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            elevation = 12f
         }
 
-        // Draggable floating touch listener
         button.setOnTouchListener(object : View.OnTouchListener {
             private var initialX = 0
             private var initialY = 0
             private var initialTouchX = 0f
             private var initialTouchY = 0f
-            private var isClick = false
+            private var isMoved = false
 
             override fun onTouch(v: View, event: MotionEvent): Boolean {
                 when (event.action) {
@@ -106,14 +106,15 @@ class FloatingCaptureService : Service() {
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
-                        isClick = true
+                        isMoved = false
+                        v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(80).start()
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = (event.rawX - initialTouchX).toInt()
                         val dy = (event.rawY - initialTouchY).toInt()
                         if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                            isClick = false
+                            isMoved = true
                         }
                         params.x = initialX + dx
                         params.y = initialY + dy
@@ -121,8 +122,10 @@ class FloatingCaptureService : Service() {
                         return true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (isClick) {
-                            captureScreenshot()
+                        v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80).start()
+                        if (!isMoved) {
+                            // Single Click -> Trigger capture only once
+                            triggerSingleScreenshot()
                         }
                         return true
                     }
@@ -135,24 +138,41 @@ class FloatingCaptureService : Service() {
         windowManager.addView(floatingView, params)
     }
 
-    private fun captureScreenshot() {
+    private fun triggerSingleScreenshot() {
+        if (!isCapturing.compareAndSet(false, true)) {
+            return // Guard against double triggers
+        }
+
+        // Haptic feedback (subtle vibration)
+        vibrateFeedback()
+
         floatingView?.visibility = View.GONE
 
         Handler(Looper.getMainLooper()).postDelayed({
-            imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "FloatSnapDisplay",
-                screenWidth,
-                screenHeight,
-                screenDensity,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface,
-                null,
-                null
-            )
+            executeCapture()
+        }, 120)
+    }
 
-            imageReader?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
+    private fun executeCapture() {
+        val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+        imageReader = reader
+
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "FloatSnapVirtualDisplay",
+            screenWidth,
+            screenHeight,
+            screenDensity,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            reader.surface,
+            null,
+            null
+        )
+
+        val captured = AtomicBoolean(false)
+
+        reader.setOnImageAvailableListener({ r ->
+            if (captured.compareAndSet(false, true)) {
+                val image = r.acquireLatestImage()
                 if (image != null) {
                     val planes = image.planes
                     val buffer = planes[0].buffer
@@ -168,43 +188,68 @@ class FloatingCaptureService : Service() {
                     bitmap.copyPixelsFromBuffer(buffer)
                     image.close()
 
-                    // Crop to exact screen dimensions
-                    val finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
+                    val cropped = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
 
-                    // Save directly to Gallery
-                    val uri = GallerySaver.saveBitmapToGallery(this@FloatingCaptureService, finalBitmap)
-                    Handler(Looper.getMainLooper()).post {
-                        if (uri != null) {
-                            Toast.makeText(this@FloatingCaptureService, "Saved to Gallery!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(this@FloatingCaptureService, "Save Failed", Toast.LENGTH_SHORT).show()
-                        }
-                        floatingView?.visibility = View.VISIBLE
-                    }
+                    // Save directly to Gallery without UI interruption
+                    Thread {
+                        GallerySaver.saveBitmapToGallery(applicationContext, cropped)
+                    }.start()
 
-                    // Release capture display
+                    // Cleanup virtual display immediately
                     virtualDisplay?.release()
                     virtualDisplay = null
+                    imageReader?.close()
+                    imageReader = null
+
+                    // Restore button
+                    Handler(Looper.getMainLooper()).post {
+                        floatingView?.visibility = View.VISIBLE
+                        isCapturing.set(false)
+                    }
+                } else {
+                    isCapturing.set(false)
+                    floatingView?.visibility = View.VISIBLE
                 }
-            }, Handler(Looper.getMainLooper()))
-        }, 150)
+            }
+        }, Handler(Looper.getMainLooper()))
     }
 
-    private fun createNotification(): Notification {
+    private fun vibrateFeedback() {
+        try {
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(35)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun createSilentNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "FloatSnap Service",
-                NotificationManager.IMPORTANCE_LOW
-            )
+                "FloatSnap Background Service",
+                NotificationManager.IMPORTANCE_MIN // Completely silent, min priority
+            ).apply {
+                setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+                setSound(null, null)
+            }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("FloatSnap Active")
-            .setContentText("Tap floating button to save screenshot to gallery")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setSmallIcon(R.drawable.ic_camera_lens)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setOngoing(true)
             .build()
     }
 
@@ -212,6 +257,7 @@ class FloatingCaptureService : Service() {
         super.onDestroy()
         floatingView?.let { windowManager.removeView(it) }
         virtualDisplay?.release()
+        imageReader?.close()
         mediaProjection?.stop()
     }
 }
