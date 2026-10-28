@@ -1,15 +1,14 @@
 package com.example.floatscreen
 
-import android.app.Activity
+import android.os.Bundle
+import android.widget.Button
+import android.widget.Toast
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
-import android.widget.Button
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 
@@ -26,7 +25,7 @@ class MainActivity : AppCompatActivity() {
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+        if (result.resultCode == RESULT_OK && result.data != null) {
             val serviceIntent = Intent(this, FloatingCaptureService::class.java).apply {
                 putExtra(FloatingCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(FloatingCaptureService.EXTRA_RESULT_DATA, result.data)
@@ -36,25 +35,22 @@ class MainActivity : AppCompatActivity() {
             } else {
                 startService(serviceIntent)
             }
-            Toast.makeText(this, "Floating button enabled!", Toast.LENGTH_SHORT).show()
-            finish() // Minimize/close MainActivity
+            finish()
         } else {
-            Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Permission required to capture", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
         projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        val startBtn = Button(this).apply {
-            text = "Start Floating Screenshot Button"
-            setOnClickListener {
-                startServiceFlow()
-            }
+        val btnToggle = findViewById<Button>(R.id.btnToggle)
+        btnToggle.setOnClickListener {
+            startServiceFlow()
         }
-        setContentView(startBtn)
     }
 
     private fun startServiceFlow() {
@@ -71,7 +67,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun checkAndRequestProjection() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Overlay permission is required", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Grant overlay permission first", Toast.LENGTH_SHORT).show()
             return
         }
         projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
